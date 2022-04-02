@@ -11,6 +11,8 @@
  behavior. Simulation parameters can be adjusted at the top of CudaBoids.cu.
 
  Requires GLEW (static), GLFW (static), and CUDA (dynamic).
+ 
+ For a Shadertoy implementation see https://www.shadertoy.com/view/stfyRs.
 
  Commands:
  
