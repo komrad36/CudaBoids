@@ -15,15 +15,9 @@
  Commands:
  
 	Space			-	toggle screen blanking
-	
 	P			-	pause
-	
 	R			-	reset boids
-	
 	T			-	toggle attraction/repulsion
-	
 	ESC			-	quit
-	
 	1 mouse button		-	weak attraction/repulsion
-	
 	2 mouse buttons		-	strong attracton/repulsion
