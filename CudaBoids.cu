@@ -18,6 +18,17 @@
 #include <list>
 #include <random>
 
+/// Requires GLEW (static), GLFW (static), and CUDA (dynamic).
+///
+/// Commands:
+///  Space            -   toggle traces
+///  P                -   pause
+///  R                -   reset boids
+///  T                -   toggle attraction/repulsion
+///  ESC              -   quit
+///  1 mouse button   -   weak attraction/repulsion
+///  2 mouse buttons  -   strong attracton/repulsion
+
 /// configuration
 static constexpr bool kFullScreen = true;
 static constexpr bool kVsync = false;
