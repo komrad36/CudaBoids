@@ -14,7 +14,7 @@
 
  Commands:
  
-	Space			-	toggle screen blanking
+	Space			-	toggle traces
 	P			-	pause
 	R			-	reset boids
 	T			-	toggle attraction/repulsion
