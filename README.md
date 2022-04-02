@@ -1,20 +1,14 @@
-# Boids_CUDA_GL
+# CudaBoids
 
- Please see screenshot examples in master branch 'Screenshots' folder!
+ See example screenshots in 'Screenshots' folder.
  
  Boids_CUDA_GL simulates bird ("boid"), fish, crowd, etc. flocking behavior,
  resulting in emergent properties. Uses CUDA for computation on the GPU
  and outputs pixels directly to an OpenGL texture with no memory transfer
- or CPU involvement whatsoever, showcasing CUDA-OpenGL
- interoperability, CUDA optimization techniques, HPC, numerical simulation,
- and event loops at extremely optimized performance. 17,000 boids
- at 100 fps even on last-generation hardware is typical. This simulation
- is primarily tuned for aesthetics, not physical accuracy, although
+ or CPU involvement for high performance. This simulation
+ is primarily tuned for aesthetics, not physical accuracy, but
  careful selection of parameters can produce very flock-like emergent
- behavior. The color of each boid is determined by its direction of travel.
- Screen-wrapping, fullscreen, and spatial data structure storage for increased
- performance are all available as options and can be enabled and disabled
- as desired in params.h. Simulation parameters are also available.
+ behavior. Simulation parameters can be adjusted at the top of CudaBoids.cu.
 
  Requires GLEW (static), GLFW (static), and CUDA (dynamic).
 
@@ -22,16 +16,14 @@
  
 	Space			-	toggle screen blanking
 	
-	P				-	pause
+	P			-	pause
 	
-	LCTRL			-	toggle attraction/repulsion
+	R			-	reset boids
 	
-	ESC				-	quit
+	T			-	toggle attraction/repulsion
 	
-	1 mouse button	-	weak attraction/repulsion
+	ESC			-	quit
 	
-	2 mouse buttons	-	strong attracton/repulsion
+	1 mouse button		-	weak attraction/repulsion
 	
-	
-
-Please see screenshot examples in master branch 'Screenshots' folder!
+	2 mouse buttons		-	strong attracton/repulsion
