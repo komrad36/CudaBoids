@@ -4,10 +4,11 @@
 *    kareem.h.omar@gmail.com
 *    https://github.com/komrad36
 *
-*    Last updated Apr 2, 2022
+*    Last updated Apr 5, 2022
 *******************************************************************/
 
 #include <chrono>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #define GLEW_STATIC
@@ -36,7 +37,7 @@ static constexpr int kWindowWidth = 800;
 static constexpr int kWindowHeight = 450;
 static constexpr int kCudaDeviceId = 0;
 
-static constexpr int kNumBoids = 5850;
+static constexpr int kNumBoids = 5888;
 static constexpr float kNeighborDist = 130.0f;
 static constexpr float kBoidLen = 6.0f;
 static constexpr float kInitialVel = 10.0f;
@@ -49,8 +50,11 @@ static constexpr float kTwoMouseButtonsFactor = 1000.0f;
 static constexpr float kVelScalar = 6.0f;
 
 /// for internal use
-static constexpr int kThreadsPerBlock = 128;
-static constexpr int kNumBlocks = ((kNumBoids - 1) / kThreadsPerBlock + 1);
+static constexpr int kSharedCollateCount = 1;
+static constexpr int kCoopWidth = 4;
+static constexpr int kThreadsPerBlock = 256;
+static constexpr int kPaddedNumBoids = int(uint32_t(kNumBoids + kSharedCollateCount * kThreadsPerBlock - 1) & ~uint32_t(kSharedCollateCount * kThreadsPerBlock - 1));
+static constexpr int kNumBlocks = (kNumBoids - 1) / (kThreadsPerBlock / kCoopWidth) + 1;
 static constexpr int kFrameHistorySize = 6;
 
 static bool paused = false;
@@ -145,7 +149,7 @@ static int Reset(int width, int height, float4* __restrict d_boids)
     std::uniform_real_distribution<float> xDis(0.0f, float(width - 1));
     std::uniform_real_distribution<float> yDis(0.0f, float(height - 1));
     std::uniform_real_distribution<float> velDis(-kInitialVel, kInitialVel);
-    float4* h_boids = new float4[kNumBoids];
+    float4* h_boids = new float4[kPaddedNumBoids];
     for (int i = 0; i < kNumBoids; ++i)
     {
         h_boids[i].x = xDis(gen);
@@ -153,7 +157,14 @@ static int Reset(int width, int height, float4* __restrict d_boids)
         h_boids[i].z = velDis(gen);
         h_boids[i].w = velDis(gen);
     }
-    CHECK_CUDA_ERRORS(cudaMemcpy(d_boids, h_boids, kNumBoids * sizeof(float4), cudaMemcpyHostToDevice));
+    for (int i = kNumBoids; i < kPaddedNumBoids; ++i)
+    {
+        h_boids[i].x = -10000.0f;
+        h_boids[i].y = -10000.0f;
+        h_boids[i].z = 0.0f;
+        h_boids[i].w = 0.0f;
+    }
+    CHECK_CUDA_ERRORS(cudaMemcpy(d_boids, h_boids, kPaddedNumBoids * sizeof(float4), cudaMemcpyHostToDevice));
     delete[] h_boids;
     reset = false;
     return 0;
@@ -162,15 +173,38 @@ static int Reset(int width, int height, float4* __restrict d_boids)
 __device__ float Dist(const float c1, const float c2, const float m)
 {
     const float d = c2 - c1;
-    const float s = abs(d);
-    const float w = d - copysign(m, d);
-    return s < 0.5f * m ? d : w;
+    const float w = d - __uint_as_float((__float_as_uint(d) & 0x80000000U) | __float_as_uint(m));
+    return abs(d) < abs(w) ? d : w;
+}
+
+__device__ float Rcp(const float x)
+{
+    float r;
+    asm("rcp.approx.ftz.f32 %0, %1;" : "=f"(r) : "f"(x));
+    return r;
+}
+
+__device__ float Div(const float n, const float d)
+{
+    return n * Rcp(d);
 }
 
 __device__ float Rem(const float n, const float d)
 {
-    const float r = fmodf(n, d);
-    return r < 0.0f ? r + d : r;
+    return fmaf(-d, floorf(Div(n, d)), n);
+}
+
+__device__ float Rsqrt(const float x)
+{
+    float r;
+    asm("rsqrt.approx.ftz.f32 %0, %1;" : "=f"(r) : "f"(x));
+    return r;
+}
+
+__device__ void Reduce(float& x)
+{
+    x += __shfl_xor_sync(uint32_t(-1), x, 1);
+    x += __shfl_xor_sync(uint32_t(-1), x, 2);
 }
 
 static __global__ void BoidsKernel(
@@ -184,73 +218,106 @@ static __global__ void BoidsKernel(
     const float repelMultiplier,
     const float dt)
 {
-    const int iBoid = blockDim.x * blockIdx.x + threadIdx.x;
-    if (iBoid >= kNumBoids)
-        return;
-
+    const int iBoid = (kThreadsPerBlock / kCoopWidth) * blockIdx.x + threadIdx.y;
     float4 b = d_in[iBoid];
 
-    int numNeighbors = 0;
-    float cmX = 0.0f, cmY = 0.0f, repX = 0.0f, repY = 0.0f, alX = -b.z, alY = -b.w;
-    {
-        const float dx = Dist(b.x, mouseX, width);
-        const float dy = Dist(b.y, mouseY, height);
-        const float lenDSqr = dt * repelMultiplier / sqrtf(fmaf(dx, dx, fmaf(dy, dy, 0.000000001f)));
-        b.z += dx * lenDSqr;
-        b.w += dy * lenDSqr;
-    }
+    float numNeighbors = 0.0f;
+    float cmX = 0.0f, cmY = 0.0f, repX = 0.0f, repY = 0.0f, alX = 0.0f, alY = 0.0f;
 
-#pragma unroll 6
-    for (int iOther = 0; iOther < kNumBoids; ++iOther)
+    __shared__ float4 others[kSharedCollateCount * kThreadsPerBlock];
+
+#pragma unroll 128
+    for (int iOther = 0; iOther < kPaddedNumBoids / kCoopWidth; iOther += kSharedCollateCount * kThreadsPerBlock / kCoopWidth)
     {
-        const float dx = Dist(b.x, d_in[iOther].x, width);
-        const float dy = Dist(b.y, d_in[iOther].y, height);
-        const float lenDSqr = fmaf(dx, dx, fmaf(dy, dy, 0.000000001f));
-        if (lenDSqr < kNeighborDist * kNeighborDist)
+        __syncthreads();
+#pragma unroll
+        for (int jOther = 0; jOther < kSharedCollateCount; ++jOther)
+            others[jOther * kThreadsPerBlock + kCoopWidth * threadIdx.y + threadIdx.x] = d_in[iOther + (kPaddedNumBoids / kCoopWidth) * threadIdx.x + (jOther * kThreadsPerBlock / kCoopWidth) + threadIdx.y];
+        __syncthreads();
+
+#pragma unroll 8
+        for (int jOther = 0; jOther < kSharedCollateCount * kThreadsPerBlock / kCoopWidth; ++jOther)
         {
-            cmX += dx;
-            repX -= __fdividef(dx, lenDSqr);
-            alX += d_in[iOther].z;
-            cmY += dy;
-            repY -= __fdividef(dy, lenDSqr);
-            alY += d_in[iOther].w;
-            ++numNeighbors;
+            const float4 other = others[threadIdx.x + kCoopWidth * jOther];
+            const float dxA = Dist(b.x, other.x, width);
+            const float dyA = Dist(b.y, other.y, height);
+            const float lenDSqrA = fmaf(dxA, dxA, fmaf(dyA, dyA, 0.000000001f));
+            const bool predA = lenDSqrA < kNeighborDist * kNeighborDist;
+            const float invLenA = Rcp(lenDSqrA);
+            if (predA) cmX = fmaf(kCmFactor, dxA, cmX);
+            if (predA) repX = fmaf(-invLenA, dxA, repX);
+            if (predA) alX = fmaf(kAlignFactor, other.z, alX);
+            if (predA) cmY = fmaf(kCmFactor, dyA, cmY);
+            if (predA) repY = fmaf(-invLenA, dyA, repY);
+            if (predA) alY = fmaf(kAlignFactor, other.w, alY);
+            if (predA) numNeighbors += 1.0f;
         }
     }
 
-    b.z += dt * ((kCmFactor * cmX + kAlignFactor * alX) / numNeighbors + kRepelFactor * repX);
-    b.w += dt * ((kCmFactor * cmY + kAlignFactor * alY) / numNeighbors + kRepelFactor * repY);
+    if (iBoid >= kNumBoids)
+        return;
+
+    if (uint32_t(iBoid - (kPaddedNumBoids / kCoopWidth) * threadIdx.x) < uint32_t(kPaddedNumBoids / kCoopWidth))
+    {
+        alX += kAlignFactor * -b.z;
+        alY += kAlignFactor * -b.w;
+    }
+
+    cmX += alX;
+    cmY += alY;
+
+    Reduce(repX);
+    Reduce(cmX);
+
+    Reduce(repY);
+    Reduce(cmY);
+
+    Reduce(numNeighbors);
+
+    if (threadIdx.x)
+        return;
 
     {
-        const float lenVSqr = b.z * b.z + b.w * b.w;
-        const float vScale = lenVSqr > kMaxVel * kMaxVel ? kMaxVel / sqrtf(lenVSqr) : 1.0f;
+        const float dx = Dist(b.x, mouseX, width);
+        const float dy = Dist(b.y, mouseY, height);
+        const float lenDSqr = dt * repelMultiplier * Rsqrt(fmaf(dx, dx, fmaf(dy, dy, 0.000000001f)));
+        b.z = fmaf(lenDSqr, dx, b.z);
+        b.w = fmaf(lenDSqr, dy, b.w);
+    }
+
+    b.z = fmaf(dt, fmaf(kRepelFactor, repX, Div(cmX, numNeighbors)), b.z);
+    b.w = fmaf(dt, fmaf(kRepelFactor, repY, Div(cmY, numNeighbors)), b.w);
+
+    {
+        const float lenVSqr = fmaf(b.z, b.z, b.w * b.w);
+        const float vScale = lenVSqr > kMaxVel * kMaxVel ? kMaxVel * Rsqrt(lenVSqr) : 1.0f;
         b.z *= vScale;
         b.w *= vScale;
     }
 
-    b.x = Rem(b.x + kVelScalar * dt * b.z, width);
-    b.y = Rem(b.y + kVelScalar * dt * b.w, height);
+    b.x = Rem(fmaf(kVelScalar * dt, b.z, b.x), width);
+    b.y = Rem(fmaf(kVelScalar * dt, b.w, b.y), height);
     d_out[iBoid] = b;
 
     {
-        const float lenVSqr = sqrtf(fmaf(b.z, b.z, fmaf(b.w, b.w, 0.000000001f)));
-        b.z /= lenVSqr;
-        b.w /= lenVSqr;
+        const float lenVSqr = Rsqrt(fmaf(b.z, b.z, fmaf(b.w, b.w, 0.000000001f)));
+        b.z *= lenVSqr;
+        b.w *= lenVSqr;
     }
 
     const float c = atan2f(b.w, b.z) * (6.0f / 6.28318530718f);
     const uchar4 rgb
     {
-        static_cast<unsigned char>(255.0f * __saturatef(fabsf(Rem(c + 0.0f, 6.0f) - 3.0f) - 1.0f)),
-        static_cast<unsigned char>(255.0f * __saturatef(fabsf(Rem(c + 4.0f, 6.0f) - 3.0f) - 1.0f)),
-        static_cast<unsigned char>(255.0f * __saturatef(fabsf(Rem(c + 2.0f, 6.0f) - 3.0f) - 1.0f)),
+        static_cast<unsigned char>(255.0f * __saturatef(abs(Rem(c + 0.0f, 6.0f) - 3.0f) - 1.0f)),
+        static_cast<unsigned char>(255.0f * __saturatef(abs(Rem(c + 4.0f, 6.0f) - 3.0f) - 1.0f)),
+        static_cast<unsigned char>(255.0f * __saturatef(abs(Rem(c + 2.0f, 6.0f) - 3.0f) - 1.0f)),
         static_cast<unsigned char>(0)
     };
 
-    int x = b.x - b.z * kBoidLen;
-    const int x2 = b.x + b.z * kBoidLen;
-    int y = b.y - b.w * kBoidLen;
-    const int y2 = b.y + b.w * kBoidLen;
+    int x = int(fmaf(-kBoidLen, b.z, b.x));
+    const int x2 = int(fmaf(kBoidLen, b.z, b.x));
+    int y = int(fmaf(-kBoidLen, b.w, b.y));
+    const int y2 = int(fmaf(kBoidLen, b.w, b.y));
 
     int dx = abs(x2 - x);
     int dy = -abs(y2 - y);
@@ -346,12 +413,10 @@ int main()
     cudaStream_t cs;
     CHECK_CUDA_ERRORS(cudaStreamCreate(&cs));
     float4* d_boids = nullptr;
-    CHECK_CUDA_ERRORS(cudaMalloc(reinterpret_cast<void**>(&d_boids), 2 * kNumBoids * sizeof(float4)));
+    CHECK_CUDA_ERRORS(cudaMalloc(reinterpret_cast<void**>(&d_boids), 2 * kPaddedNumBoids * sizeof(float4)));
     if (Reset(width, height, d_boids))
         return EXIT_FAILURE;
-    CHECK_CUDA_ERRORS(cudaDeviceSetCacheConfig(cudaFuncCachePreferL1));
-    CHECK_CUDA_ERRORS(cudaFuncSetCacheConfig(BoidsKernel, cudaFuncCachePreferL1));
-    CHECK_CUDA_ERRORS(cudaFuncSetAttribute(BoidsKernel, cudaFuncAttributePreferredSharedMemoryCarveout, cudaSharedmemCarveoutMaxL1));
+    CHECK_CUDA_ERRORS(cudaDeviceSetSharedMemConfig(cudaSharedMemBankSizeEightByte));
     std::chrono::high_resolution_clock::time_point fpsClock = std::chrono::high_resolution_clock::now();
     frameClock = std::chrono::high_resolution_clock::now();
     std::list<std::chrono::nanoseconds> frameTimes{ std::chrono::nanoseconds(0) };
@@ -363,7 +428,7 @@ int main()
     {
         if (!paused)
         {
-            if (reset && Reset(width, height, pingPong ? d_boids + kNumBoids : d_boids))
+            if (reset && Reset(width, height, pingPong ? d_boids + kPaddedNumBoids : d_boids))
                 return EXIT_FAILURE;
             CHECK_CUDA_ERRORS(cudaGraphicsMapResources(1, &cgr, cs));
             size_t bufSize = 0;
@@ -373,10 +438,10 @@ int main()
             if (!traces)
                 cudaMemset(d_pbo, 0, sizeof(uchar4) * width * height);
 
-            BoidsKernel<<<kNumBlocks, kThreadsPerBlock>>>(
+            BoidsKernel<<<kNumBlocks, { kCoopWidth, kThreadsPerBlock / kCoopWidth }>>>(
                 d_pbo,
-                pingPong ? d_boids + kNumBoids : d_boids,
-                pingPong ? d_boids : d_boids + kNumBoids,
+                pingPong ? d_boids + kPaddedNumBoids : d_boids,
+                pingPong ? d_boids : d_boids + kPaddedNumBoids,
                 mouseX,
                 mouseY,
                 float(width),
