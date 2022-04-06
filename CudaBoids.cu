@@ -259,8 +259,8 @@ static __global__ void BoidsKernel(
 
     if (uint32_t(iBoid - (kPaddedNumBoids / kCoopWidth) * threadIdx.x) < uint32_t(kPaddedNumBoids / kCoopWidth))
     {
-        alX += kAlignFactor * -b.z;
-        alY += kAlignFactor * -b.w;
+        alX = fmaf(-kAlignFactor, b.z, alX);
+        alY = fmaf(-kAlignFactor, b.w, alY);
     }
 
     cmX += alX;
