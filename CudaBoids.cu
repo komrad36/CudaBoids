@@ -239,18 +239,18 @@ static __global__ void BoidsKernel(
         for (int jOther = 0; jOther < kSharedCollateCount * kThreadsPerBlock / kCoopWidth; ++jOther)
         {
             const float4 other = others[threadIdx.x + kCoopWidth * jOther];
-            const float dxA = Dist(b.x, other.x, width);
-            const float dyA = Dist(b.y, other.y, height);
-            const float lenDSqrA = fmaf(dxA, dxA, fmaf(dyA, dyA, 0.000000001f));
-            const bool predA = lenDSqrA < kNeighborDist * kNeighborDist;
-            const float invLenA = Rcp(lenDSqrA);
-            if (predA) cmX = fmaf(kCmFactor, dxA, cmX);
-            if (predA) repX = fmaf(-invLenA, dxA, repX);
-            if (predA) alX = fmaf(kAlignFactor, other.z, alX);
-            if (predA) cmY = fmaf(kCmFactor, dyA, cmY);
-            if (predA) repY = fmaf(-invLenA, dyA, repY);
-            if (predA) alY = fmaf(kAlignFactor, other.w, alY);
-            if (predA) numNeighbors += 1.0f;
+            const float dx = Dist(b.x, other.x, width);
+            const float dy = Dist(b.y, other.y, height);
+            const float lenDSqr = fmaf(dx, dx, fmaf(dy, dy, 0.000000001f));
+            const bool pred = lenDSqr < kNeighborDist * kNeighborDist;
+            const float invLen = Rcp(lenDSqr);
+            if (pred) cmX = fmaf(kCmFactor, dx, cmX);
+            if (pred) repX = fmaf(-invLen, dx, repX);
+            if (pred) alX = fmaf(kAlignFactor, other.z, alX);
+            if (pred) cmY = fmaf(kCmFactor, dy, cmY);
+            if (pred) repY = fmaf(-invLen, dy, repY);
+            if (pred) alY = fmaf(kAlignFactor, other.w, alY);
+            if (pred) numNeighbors += 1.0f;
         }
     }
 
