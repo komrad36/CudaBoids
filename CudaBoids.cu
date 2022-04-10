@@ -7,6 +7,10 @@
 *    Last updated Apr 5, 2022
 *******************************************************************/
 
+#ifdef __INTELLISENSE__
+#define __CUDACC__
+#endif
+
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -37,7 +41,7 @@ static constexpr int kWindowWidth = 800;
 static constexpr int kWindowHeight = 450;
 static constexpr int kCudaDeviceId = 0;
 
-static constexpr int kNumBoids = 5888 * 4;
+static constexpr int kNumBoids = 5888;
 static constexpr float kNeighborDist = 130.0f;
 static constexpr float kBoidLen = 6.0f;
 static constexpr float kInitialVel = 10.0f;
@@ -170,10 +174,17 @@ static int Reset(int width, int height, float4* __restrict d_boids)
     return 0;
 }
 
+__device__ float Copysign(float a, float b)
+{
+    float r;
+    asm("lop3.b32 %0, %1, 0x80000000U, %2, 0xE2;" : "=f"(r) : "f"(a), "f"(b));
+    return r;
+}
+
 __device__ float Dist(const float c1, const float c2, const float m)
 {
     const float d = c2 - c1;
-    const float w = d - __uint_as_float((__float_as_uint(d) & 0x80000000U) | __float_as_uint(m));
+    const float w = d - Copysign(d, m);
     return abs(d) < abs(w) ? d : w;
 }
 
@@ -203,8 +214,13 @@ __device__ float Rsqrt(const float x)
 
 __device__ void Reduce(float& x)
 {
-    x += __shfl_xor_sync(uint32_t(-1), x, 1);
-    x += __shfl_xor_sync(uint32_t(-1), x, 2);
+    uint32_t i = 1;
+#pragma unroll
+    while (i < kCoopWidth)
+    {
+        x += __shfl_xor_sync(uint32_t(-1), x, i);
+        i <<= 1;
+    }
 }
 
 static __global__ void BoidsKernel(
