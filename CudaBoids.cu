@@ -37,7 +37,7 @@ static constexpr int kWindowWidth = 800;
 static constexpr int kWindowHeight = 450;
 static constexpr int kCudaDeviceId = 0;
 
-static constexpr int kNumBoids = 5888 * 4;
+static constexpr int kNumBoids = 5888;
 static constexpr float kNeighborDist = 130.0f;
 static constexpr float kBoidLen = 6.0f;
 static constexpr float kInitialVel = 10.0f;
