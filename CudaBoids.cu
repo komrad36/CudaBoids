@@ -37,7 +37,7 @@ static constexpr int kWindowWidth = 800;
 static constexpr int kWindowHeight = 450;
 static constexpr int kCudaDeviceId = 0;
 
-static constexpr int kNumBoids = 5888;
+static constexpr int kNumBoids = 5888 * 4;
 static constexpr float kNeighborDist = 130.0f;
 static constexpr float kBoidLen = 6.0f;
 static constexpr float kInitialVel = 10.0f;
@@ -121,7 +121,7 @@ static void KeyboardCb(GLFWwindow* pWindow, int key, int /*scancode*/, int actio
     }
 }
 
-static void mouseMoveCallback(GLFWwindow* /*pWindow*/, double x, double y)
+static void MouseMoveCb(GLFWwindow* /*pWindow*/, double x, double y)
 {
     mouseX = float(x);
     mouseY = float(y);
@@ -134,7 +134,7 @@ static void MouseClickCb(GLFWwindow* pWindow, int /*button*/, int action, int /*
     glfwGetCursorPos(pWindow, &x, &y);
     mouseX = float(x);
     mouseY = float(y);
-    glfwSetCursorPosCallback(pWindow, buttonsDown ? mouseMoveCallback : nullptr);
+    glfwSetCursorPosCallback(pWindow, buttonsDown ? MouseMoveCb : nullptr);
 }
 
 static void WindowMoveCb(GLFWwindow* /*pWindow*/, int /*x*/, int /*y*/)
