@@ -4,7 +4,7 @@
 *    kareem.h.omar@gmail.com
 *    https://github.com/komrad36
 *
-*    Last updated Apr 5, 2022
+*    Last updated Apr 13, 2022
 *******************************************************************/
 
 #ifdef __INTELLISENSE__
@@ -177,14 +177,14 @@ static int Reset(int width, int height, float4* __restrict d_boids)
 __device__ float Copysign(float a, float b)
 {
     float r;
-    asm("lop3.b32 %0, %1, 0x80000000U, %2, 0xE2;" : "=f"(r) : "f"(a), "f"(b));
+    asm("lop3.b32 %0, %1, 0x80000000U, %2, 0xB8;" : "=f"(r) : "f"(a), "f"(b));
     return r;
 }
 
 __device__ float Dist(const float c1, const float c2, const float m)
 {
     const float d = c2 - c1;
-    const float w = d - Copysign(d, m);
+    const float w = d - Copysign(m, d);
     return abs(d) < abs(w) ? d : w;
 }
 
