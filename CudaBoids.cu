@@ -4,7 +4,7 @@
 *    kareem.h.omar@gmail.com
 *    https://github.com/komrad36
 *
-*    Last updated Apr 13, 2022
+*    Last updated Apr 18, 2022
 *******************************************************************/
 
 #ifdef __INTELLISENSE__
@@ -169,6 +169,7 @@ static int Reset(int width, int height, float4* __restrict d_boids)
         h_boids[i].w = 0.0f;
     }
     CHECK_CUDA_ERRORS(cudaMemcpy(d_boids, h_boids, kPaddedNumBoids * sizeof(float4), cudaMemcpyHostToDevice));
+    CHECK_CUDA_ERRORS(cudaMemcpy(d_boids + kPaddedNumBoids, h_boids, kPaddedNumBoids * sizeof(float4), cudaMemcpyHostToDevice));
     delete[] h_boids;
     reset = false;
     return 0;
